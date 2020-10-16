@@ -1,0 +1,16 @@
+name: Build development RPM
+on:
+  workflow_dispatch:
+    inputs:
+      war:
+        description: 'WAR number'
+        required: true
+
+jobs:
+  create_development_rpm:
+    runs-on: ubuntu-latest
+    container: nethserver/makerpms:7
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set new version
+      run: echo "development-${{ github.event.inputs.version }}" > VERSION
