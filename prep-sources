@@ -23,7 +23,7 @@
 #  at the end a war named webtop-webapp-5.war will
 #  be available inside th current directory
 
-set -e 
+set -e
 
 function exit_error
 {
@@ -40,118 +40,150 @@ fi
 
 if cat VERSION | grep -qE ^staging- ; then
     tag_name=''
+    tag_name=''
+    version="staging"
+    resource_path="*/resources/*"
+elif cat VERSION | grep -qE ^development- ; then
+    tag_name=''
+    version="development"
+    resource_path="*"
+    war_number=$(cat VERSION | sed -e 's/development-\(.*\)/\1/')
 else
     tag_name=$(cat VERSION)
     if [ -z $tag_name ]; then
         exit_error
     fi
+    resource_path="*/resources/*"
 fi
 
-# Make sure nodjs is in path
-PATH=$PATH:$(pwd)/node-v0.8.9-linux-x64/bin
-export PATH
+if [ "$version" != "development" ]; then
+	# Make sure nodjs is in path
+	PATH=$PATH:$(pwd)/node-v0.8.9-linux-x64/bin
+	export PATH
 
-# Maven sure maven has enough RAM
-MAVEN_OPTS="-Xmx1024m"
-export MAVEN_OPTS
+	# Maven sure maven has enough RAM
+	MAVEN_OPTS="-Xmx1024m"
+	export MAVEN_OPTS
 
-if [ ! -d "node-v0.8.9-linux-x64" ]; then
-    wget https://nodejs.org/dist/v0.8.9/node-v0.8.9-linux-x64.tar.gz
-    tar xvzf node-v0.8.9-linux-x64.tar.gz
-fi
+	if [ ! -d "node-v0.8.9-linux-x64" ]; then
+	    wget https://nodejs.org/dist/v0.8.9/node-v0.8.9-linux-x64.tar.gz
+	    tar xvzf node-v0.8.9-linux-x64.tar.gz
+	fi
 
-for P in mvn javac bzip2 node wget; do
-    which $P >/dev/null 2>&1 || { echo "Missing '$P' executable!"; exit 1; }
-done
+	for P in mvn javac bzip2 node wget; do
+	    which $P >/dev/null 2>&1 || { echo "Missing '$P' executable!"; exit 1; }
+	done
 
 
-if [ ! -d sonicle-webtop5-gate ]; then
-    echo "Downloading sonicle-webtop5-gate..."
-    echo
-    git clone https://github.com/sonicle/sonicle-webtop5-gate.git
-fi
+	if [ ! -d sonicle-webtop5-gate ]; then
+	    echo "Downloading sonicle-webtop5-gate..."
+	    echo
+	    git clone https://github.com/sonicle/sonicle-webtop5-gate.git
+	fi
 
-pushd sonicle-webtop5-gate
-git pull
+	pushd sonicle-webtop5-gate
+	git pull
 
-echo
-echo "Cleanup local copy... "
-rm -rf sencha components
+	echo
+	echo "Cleanup local copy... "
+	rm -rf sencha components
 
-echo
-echo "Cloning all repositories..."
-echo
+	echo
+	echo "Cloning all repositories..."
+	echo
 
-if [ -z $tag_name ]; then
-  gmake \
-    COMPONENTS_GIT_BASE_URL=https://code.sonicle.com/scm/webtop \
-    TOOLS_GIT_BASE_URL=https://code.sonicle.com/scm/mvn \
-    clone >/dev/null
+	if [ -z $tag_name ]; then
+	  gmake \
+	    COMPONENTS_GIT_BASE_URL=https://code.sonicle.com/scm/webtop \
+	    TOOLS_GIT_BASE_URL=https://code.sonicle.com/scm/mvn \
+	    clone >/dev/null
+	else
+	  gmake clone >/dev/null
+	fi
+
+	pushd components
+
+	for repo_path in $(find . -maxdepth 1  -type d)
+	do
+	    repo_name=$(basename $repo_path)
+	    if [ -d $repo_path ]; then
+	       if [  -z $tag_name ] && git -C $repo_path branch -r | grep -q origin/release; then
+		   echo "Checking out 'release' branch for '$repo_name'"
+	           git -C $repo_path checkout origin/release --force > /dev/null
+	       elif git -C $repo_path tag | grep -q $tag_name; then
+	           echo "Checking out tag '$tag_name' for '$repo_name'"
+	           git -C $repo_path checkout tags/$tag_name --force > /dev/null
+	       else
+	           echo "Checking out 'master' for '$repo_name'"
+	       fi
+	    fi
+	done
+
+	popd
+
+	popd
+	echo
+	echo "Adding Nethesis patches..."
+	echo
+	for f in $(find patches -name \*.patch); do
+	    project=$(echo $f | cut -d'/' -f 2)
+	    git apply $f --directory=sonicle-webtop5-gate/components/$project
+	    echo "Applying $f"
+	done
+	pushd sonicle-webtop5-gate
+
+
+	echo
+	echo "Building..."
+	echo
+	gmake build
+
+	echo
+	echo "Creating war..."
+	echo
+	gmake deploy
 else
-  gmake clone >/dev/null
+	tmpdir_dev=$(mktemp -d)
+	pushd $tmpdir_dev
+	echo
+	echo "Download development war..."
+	echo
+	wget https://www.sonicle.com/nethesis/webtop5/staging/webtop5\#\#"${war_number}".war   -O webtop-webapp-5.war
+
+	echo
+	echo "Unpack war's libs..."
+	echo
+	unzip webtop-webapp-5.war
+	unzip -o 'WEB-INF/lib/*.jar' -d WEB-INF/lib/
 fi
 
-pushd components
-
-for repo_path in $(find . -maxdepth 1  -type d)
-do
-    repo_name=$(basename $repo_path)
-    if [ -d $repo_path ]; then
-       if [  -z $tag_name ] && git -C $repo_path branch -r | grep -q origin/release; then
-	   echo "Checking out 'release' branch for '$repo_name'"
-           git -C $repo_path checkout origin/release --force > /dev/null
-       elif git -C $repo_path tag | grep -q $tag_name; then
-           echo "Checking out tag '$tag_name' for '$repo_name'"
-           git -C $repo_path checkout tags/$tag_name --force > /dev/null
-       else
-           echo "Checking out 'master' for '$repo_name'"
-       fi
-    fi
-done
-
-popd
-
-popd
-echo
-echo "Adding Nethesis patches..."
-echo
-for f in $(find patches -name \*.patch); do
-    project=$(echo $f | cut -d'/' -f 2)
-    git apply $f --directory=sonicle-webtop5-gate/components/$project
-    echo "Applying $f"
-done
-pushd sonicle-webtop5-gate
-
-
-echo
-echo "Building..."
-echo
-gmake build
-
-echo
-echo "Creating war..."
-echo
-gmake deploy
 
 echo
 echo "Extracting sql scripts..."
 tmpdir=$(mktemp -d)
 mkdir $tmpdir/{data,schema}
-find -path "*/resources/*" -name init-data\*.sql -type f  -exec cp -p '{}' $tmpdir/data \;
-find -path "*/resources/*" -name init-\*.sql ! -name init-data\*.sql -type f -exec cp -p '{}' $tmpdir/schema \;
+find -path "$resource_path" -name init-data\*.sql -type f  -exec cp -p '{}' $tmpdir/data \;
+find -path "$resource_path" -name init-\*.sql ! -name init-data\*.sql -type f -exec cp -p '{}' $tmpdir/schema \;
 # Remove invalid lines starting with @ used inside WebTop
 find $tmpdir/schema -name init-\*.sql | xargs sed -i '/^@/d'
 tar cvzf sql-scripts.tar.gz -C $tmpdir .
 echo "sql-scripts.tar.gz successfully created"
 echo
 
-popd
-
 echo
 echo "Copying files..."
 echo
-cp -v sonicle-webtop5-gate/components/webtop-webapp/target/webtop-webapp-5.war .
-cp -v sonicle-webtop5-gate/sql-scripts.tar.gz .
+
+popd
+
+if [ "$version" != "development" ]; then
+
+    cp -v sonicle-webtop5-gate/components/webtop-webapp/target/webtop-webapp-5.war .
+    cp -v sonicle-webtop5-gate/sql-scripts.tar.gz .
+else
+    cp -v $tmpdir_dev/webtop-webapp-5.war .
+    cp -v $tmpdir_dev/sql-scripts.tar.gz .
+fi
 
 echo
 echo "webtop-webapp-5.war and sql-scripts.tar.gz successfully created"
